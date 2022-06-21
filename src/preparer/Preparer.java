@@ -7,18 +7,15 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.Iterator;
+import java.util.Optional;
 import java.util.Set;
-
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.FileImageInputStream;
-import javax.imageio.stream.ImageInputStream;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+
+import utils.Utils;
 
 public class Preparer {
 
@@ -27,41 +24,62 @@ public class Preparer {
 	private final String OUTPUT_FILE_NAME = OUTPUT_FILE_PARAM + "_prepared.html";
 
 	private final Set<String> excludedTags = new HashSet<>(Arrays.asList(new String[] {
-			"title", "h1", "h2", "p"
+			"title", "link", "h1", "h2", "p"
 	}));
 
 	private final String PAGE_ELEMENT_CLASS_NAME = "Page";
 	private final String IMAGE_CONTAINER_CLASS_NAME = "ImageContainer";
 
+	private final int BROWSER_HEADER_HEIGHT_PX = 100;
+	private final int OS_BOTTOM_TOOLBAR_HEIGHT_PX = 43;
+
 	//---- Atributtes ----
-	private final boolean centerHorizontally;
-	private final int screenHeight, screenWidth;
+	private final Dimension screenResolution;
+	private final Configuration configuration;
 
 	private File inputFile;
 
 	//---- Constructor ----
-	public Preparer(final int screenHeight) {
-		this(-1, screenHeight, false);
+	public Preparer(final Resolutions resolution, final Configuration configuration) {
+		this.screenResolution = resolution.getDimension();
+		this.configuration = configuration;
 	}
 
-	public Preparer(final int screenWidth, final int screenHeight) {
-		this(screenWidth, screenHeight, screenWidth >= 0);
-	}
-
-	private Preparer(final int screenWidth, final int screenHeight, final boolean centerHorizontally) {
-		this.screenHeight = screenHeight;
-		this.screenWidth = screenWidth;
-		this.centerHorizontally = centerHorizontally;
+	public Preparer(final int screenWidth, final int screenHeight, final Configuration configuration) {
+		this.screenResolution = new Dimension(screenWidth, screenHeight);
+		this.configuration = configuration;
 	}
 
 	//---- Methods ----
-	public void prepare(final String pathHtmlFile) throws IOException {
-		this.inputFile = new File(pathHtmlFile);
+	public void prepare(final String pathHtmlFile) {
+		this.inputFile = loadInputFile(pathHtmlFile);
 
 		String outputPath = constructOutputFilePath();
 		String outputContent = constructOutputFileContent();
 
 		writePreparedHtmlFile(outputPath, outputContent);
+	}
+
+	private File loadInputFile(final String pathHtmlFile) {
+		if(pathHtmlFile == null)
+			throw new IllegalArgumentException("Error. The html file's path can't be null");
+
+		File inputFile = new File(pathHtmlFile);
+
+		if(!inputFile.exists())
+			throw new PreparerException("Error. File '" + pathHtmlFile + "' not found");
+
+		Optional<String> fileExtension = getFileExtension(inputFile.getName());
+		if(!inputFile.isFile() || !fileExtension.isPresent() || !fileExtension.get().equals("html"))
+			throw new PreparerException("Error. The path '" + pathHtmlFile + "' isn't correspond to a html file");
+
+		return inputFile;
+	}
+
+	public Optional<String> getFileExtension(final String filename) {
+	    return Optional.ofNullable(filename)
+	      .filter(f -> f.contains("."))
+	      .map(f -> f.substring(filename.lastIndexOf(".") + 1));
 	}
 
 	private String constructOutputFilePath() {
@@ -74,15 +92,28 @@ public class Preparer {
 		return path + outputFileName;
 	}
 
-	private String constructOutputFileContent() throws IOException {
-		Document docHtml = Jsoup.parse(inputFile, StandardCharsets.UTF_8.name());
+	private String constructOutputFileContent() {
+		Document docHtml = transformInputToHtmlDocument();
 
 		deleteUnusedTags(docHtml);
 		centerPages(docHtml);
 
 		return docHtml.toString();
 	}
-	private void deleteUnusedTags(final Document docHtml) {
+
+	private Document transformInputToHtmlDocument() {
+		try {
+			return Jsoup.parse(inputFile, StandardCharsets.UTF_8.name());
+		} catch(IOException ex) {
+			throw new PreparerException("Error trying to transform the input file (" + inputFile.getAbsolutePath() + ") as a Jsoup Document.");
+		}
+	}
+
+	private void deleteUnusedTags(final Document docHtml) {
+		if(!configuration.removeStyles()) {
+			excludedTags.remove("link");
+		}
+
 		for(String tag : excludedTags) {
 			deleteTagFromDocument(docHtml, tag);
 		}
@@ -104,52 +135,44 @@ public class Preparer {
 
 	private void centerPage(final Element page) {
 		Element imgContainer = page.getElementsByClass(IMAGE_CONTAINER_CLASS_NAME).first();
-		Dimension imgDimensions;
-		try {
-			imgDimensions = getImgDimension(imgContainer);
+		Dimension imgDimensions = getImgDimension(imgContainer);
+
+		if(configuration.centerVertically()) {
 			centerPageVertically(page, imgDimensions);
+		}
+
+		if(configuration.centerHorizontally()) {
 			centerPageHorizontally(page, imgDimensions);
-		} catch (IOException e) {
-			e.printStackTrace();
 		}
 	}
 
-	private Dimension getImgDimension(final Element imgContainer) throws IOException {
-		String imgPath = imgContainer.getElementsByTag("img").first().attr("src");
-		File imgFile = new File(inputFile.getParent() + "/" + imgPath);
+	private Dimension getImgDimension(final Element imgContainer) {
+		String imgRelativePath = imgContainer.getElementsByTag("img").first().attr("src");
+		String imgAbsolutePath = inputFile.getParent() + "/" + imgRelativePath;
 
-		int pos = imgFile.getName().lastIndexOf(".");
-		if(pos == -1)
-			throw new IOException("No extension for file: " + imgFile.getAbsolutePath());
-		String suffix = imgFile.getName().substring(pos + 1);
-		Iterator<ImageReader> iter = ImageIO.getImageReadersBySuffix(suffix);
-		if(iter.hasNext()) {
-			ImageReader reader = iter.next();
-			try {
-				ImageInputStream stream = new FileImageInputStream(imgFile);
-				reader.setInput(stream);
-				int width = reader.getWidth(reader.getMinIndex());
-				int height = reader.getHeight(reader.getMinIndex());
-				return new Dimension(width, height);
-		  } catch (IOException e) {
-			  System.err.println("Error reading: " + imgFile.getAbsolutePath());
-		  } finally {
-			  reader.dispose();
-		  }
+		try {
+			int[] dimensions = Utils.Files.getImgDimension(imgAbsolutePath);
+			return new Dimension(dimensions[0], dimensions[1]);
+		} catch (Exception ex) {
+			throw new PreparerException("Error when trying to get dimensions from image (" + imgAbsolutePath + ").");
 		}
-		throw new IOException("Not a known image file: " + imgFile.getAbsolutePath());
 	}
 
 	private void centerPageVertically(final Element page, final Dimension imgDimensions) {
-		int padding = calculateSpacing(screenHeight, imgDimensions.getHeight());
-		addStyleToElement(page, "padding-top: " + padding + "; padding-bottom: " + padding);
+		int padding = calculateSpacing(screenResolution.getHeight(), imgDimensions.getHeight());
+		int paddingTop = padding, paddingBottom = padding;
+
+		if(!configuration.fullscreenModeWillBeUsed()) {
+			paddingTop -= BROWSER_HEADER_HEIGHT_PX;
+			paddingBottom += OS_BOTTOM_TOOLBAR_HEIGHT_PX;
+		}
+
+		addStyleToElement(page, "padding-top: " + paddingTop + "; padding-bottom: " + paddingBottom);
 	}
 
 	private void centerPageHorizontally(final Element page, final Dimension imgDimensions) {
-		if(centerHorizontally) {
-			int margin = calculateSpacing(screenWidth, imgDimensions.getWidth());
-			addStyleToElement(page, "margin-left: " + margin + "; margin-right: " + margin);
-		}
+		int margin = calculateSpacing(screenResolution.getWidth(), imgDimensions.getWidth());
+		addStyleToElement(page, "margin-left: " + margin + "; margin-right: " + margin);
 	}
 
 	private int calculateSpacing(final int screenPx, final int imgPx) {
@@ -162,8 +185,12 @@ public class Preparer {
 		element.attributes().put("style", currentStyle + style);
 	}
 
-	private void writePreparedHtmlFile(final String path, final String content) throws IOException {
-		Files.write(Paths.get(path), content.getBytes());
+	private void writePreparedHtmlFile(final String path, final String content) {
+		try {
+			Files.write(Paths.get(path), content.getBytes());
+		} catch (IOException ex) {
+			throw new PreparerException("Error when trying to write the preparer html file");
+		}
 	}
 
 }
