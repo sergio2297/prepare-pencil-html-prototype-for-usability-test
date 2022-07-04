@@ -1,5 +1,8 @@
 package preparer;
 
+import java.util.HashSet;
+import java.util.Set;
+
 public enum Resolutions {
 	/** 1280 x 720 px */
 	HD("HD", 1280, 720),
@@ -29,4 +32,25 @@ public enum Resolutions {
 		return dimensionPx;
 	}
 
+	public static Set<String> names() {
+		Set<String> names = new HashSet<>();
+		for(int i = 0; i < values().length; ++i) {
+			names.add(values()[i].name);
+		}
+		return names;
+	}
+
+	public static Resolutions getResolutionByName(final String name) {
+		int i = 0;
+
+		while(i < values().length && !values()[i].getName().equals(name)) {
+			++i;
+		}
+
+		if(i < values().length) {
+			return values()[i];
+		} else {
+			return null;
+		}
+	}
 }

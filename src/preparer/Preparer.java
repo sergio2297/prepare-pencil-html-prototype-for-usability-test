@@ -51,13 +51,15 @@ public class Preparer {
 	}
 
 	//---- Methods ----
-	public void prepare(final String pathHtmlFile) {
+	public String prepare(final String pathHtmlFile) {
 		this.inputFile = loadInputFile(pathHtmlFile);
 
 		String outputPath = constructOutputFilePath();
 		String outputContent = constructOutputFileContent();
 
 		writePreparedHtmlFile(outputPath, outputContent);
+
+		return outputPath;
 	}
 
 	private File loadInputFile(final String pathHtmlFile) {
@@ -148,7 +150,8 @@ public class Preparer {
 
 	private Dimension getImgDimension(final Element imgContainer) {
 		String imgRelativePath = imgContainer.getElementsByTag("img").first().attr("src");
-		String imgAbsolutePath = inputFile.getParent() + "/" + imgRelativePath;
+		String parentDirectory = Utils.Strings.normalice(inputFile.getParent());
+		String imgAbsolutePath = (parentDirectory.isEmpty() ? "" : parentDirectory + File.separator) + imgRelativePath;
 
 		try {
 			int[] dimensions = Utils.Files.getImgDimension(imgAbsolutePath);
